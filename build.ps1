@@ -6,7 +6,7 @@ param(
     [switch]$NoTesseract,        # don't embed OCR even if it's on this machine
     [switch]$SkipTests,          # bypass the regression suite (not advised)
     [string]$SignThumbprint,     # SHA1 thumbprint of the code-signing certificate
-    [string]$TimestampUrl = "http://timestamp.sectigo.com"
+    [string]$TimestampUrl = "http://timestamp.sectigo.com",
     [string]$IsccPath,           # explicit path to ISCC.exe if auto-detection fails
     # OCR language packs to embed. Defaults cover an all-India arbitration practice.
     [string[]]$Languages = @("eng","osd","hin","tel","tam","kan","mal","mar",
@@ -118,10 +118,12 @@ $size = [math]::Round((Get-ChildItem (Join-Path $Root "dist\FileForge") -Recurse
 Write-Host "Built dist\FileForge\FileForge.exe  ($size MB total)" -ForegroundColor Green
 
 # --- verify bundled resources ----------------------------------------------
+# NOTE: this app does not use PyMuPDF (AGPL-banned, see CLAUDE.md 2.1) - do not
+# add a check for pymupdf's layout model back here.
 $Internal = Join-Path $Root "dist\FileForge\_internal"
 $checks = @{
-    "PyMuPDF layout model (PDF->Markdown)" = "pymupdf\layout\resources"
-    "python-docx template (PDF->Word)"     = "docx\templates"
+    "pypdfium2 native binary (PDF rendering)" = "pypdfium2_raw\pdfium.dll"
+    "python-docx template (PDF->Word)"        = "docx\templates"
 }
 foreach ($k in $checks.Keys) {
     if (Test-Path (Join-Path $Internal $checks[$k])) {
@@ -175,9 +177,12 @@ if (-not $SkipInstaller) {
             if ($iscc) { break }
             Get-ChildItem $hive -EA SilentlyContinue |
                 Where-Object { $_.PSChildName -like "Inno Setup*" } | ForEach-Object {
+                    # $script: is required: ForEach-Object's scriptblock runs in a child
+                    # scope, so a plain `$iscc =` here would be discarded on return and
+                    # this whole detection path would silently never find anything.
                     $loc = (Get-ItemProperty $_.PSPath -EA SilentlyContinue).InstallLocation
                     if ($loc -and (Test-Path (Join-Path $loc "ISCC.exe"))) {
-                        $iscc = Join-Path $loc "ISCC.exe"
+                        $script:iscc = Join-Path $loc "ISCC.exe"
                     }
                 }
         }

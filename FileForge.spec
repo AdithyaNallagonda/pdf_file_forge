@@ -10,9 +10,10 @@ datas = []
 binaries = []
 hiddenimports = []
 
-# PyMuPDF >=1.25 carries an ONNX layout model under pymupdf/layout/resources/.
-# Static analysis cannot see data files, so collect_all() is required here -
-# without it pymupdf4llm raises FileNotFoundError on import at runtime.
+# Some of these packages carry data files (tessdata-adjacent resources, CJK
+# encoding tables, etc.) that static analysis cannot see, so collect_all() is
+# required. Keep this list in sync with requirements.txt / THIRD_PARTY_LICENSES.md
+# -- every entry here must be permissively licensed (see CLAUDE.md 2.1).
 for pkg in ("pypdfium2", "pypdfium2_raw", "pdfplumber", "pdfminer", "pypdf",
             "pikepdf", "PIL", "flet"):
     try:
@@ -23,7 +24,7 @@ for pkg in ("pypdfium2", "pypdfium2_raw", "pdfplumber", "pdfminer", "pypdf",
 
 # python-docx ships a default.docx template it loads at runtime
 datas += collect_data_files("docx")
-# pdf2docx carries font-mapping resources
+# pdfminer (pdfplumber's parser) carries CJK/encoding resource tables
 datas += collect_data_files("pdfminer")
 
 # Optional helper binaries staged by build.ps1 into tools/ — shipped verbatim.
@@ -32,10 +33,13 @@ if (ROOT / "tools").is_dir():
         if f.is_file():
             datas.append((str(f), str(Path("tools") / f.parent.relative_to(ROOT / "tools"))))
 
+# NEVER add pymupdf / fitz / pymupdf4llm / pdf2docx / img2pdf / docxcompose /
+# PyQt here: all are AGPL/LGPL/GPL and banned from this closed-source build
+# (CLAUDE.md 2.1). This project already paid for one AGPL removal refactor.
 hiddenimports += [
-    "pypdfium2", "pdfplumber", "pdfminer", "pdfminer.high_level", "pypdf", "pymupdf4llm", "pikepdf", "img2pdf",
+    "pypdfium2", "pdfplumber", "pdfminer", "pdfminer.high_level", "pypdf", "pikepdf",
     "PIL.Image", "PIL.ImageFile", "pytesseract",
-    "docx", "docxcompose", "docxcompose.composer",
+    "docx",
     # docx2pdf drives Word over COM
     "win32com", "win32com.client", "pythoncom", "pywintypes",
 ]

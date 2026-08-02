@@ -16,7 +16,10 @@ from app import config  # noqa: E402
 
 logging.basicConfig(
     filename=config.LOG_DIR / "fileforge.log", filemode="a", level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    encoding="utf-8")   # paths/messages routinely carry Hindi/Telugu/Tamil text;
+                        # Windows' default cp125x file encoding silently drops
+                        # those log lines otherwise (logging swallows the error).
 log = logging.getLogger(config.APP_NAME)
 
 

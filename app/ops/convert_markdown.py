@@ -66,38 +66,6 @@ def uses_legacy_font(page) -> str:
     return ""
 
 
-def _unused_heuristic(page) -> str:  # retained shape for reference only
-    data = {}
-    sizes = [s["size"] for b in data.get("blocks", []) if b.get("type") == 0
-             for l in b.get("lines", []) for s in l.get("spans", [])]
-    body = sorted(sizes)[len(sizes) // 2] if sizes else 11.0
-    out: list[str] = []
-    for block in data.get("blocks", []):
-        if block.get("type") != 0:
-            continue
-        lines: list[str] = []
-        maxsize = 0.0
-        bold = True
-        for line in block.get("lines", []):
-            txt = "".join(s.get("text", "") for s in line.get("spans", []))
-            for s in line.get("spans", []):
-                maxsize = max(maxsize, s.get("size", 0))
-                bold &= bool(s.get("flags", 0) & 16)
-            if txt.strip():
-                lines.append(txt.strip())
-        if not lines:
-            continue
-        text = " ".join(lines)
-        if maxsize >= body * 1.45:
-            out.append(f"## {text}")
-        elif maxsize >= body * 1.15 or (bold and len(text) < 90):
-            out.append(f"### {text}")
-        else:
-            out.append(text)
-    return "\n\n".join(out)
-
-
-
 class _RollingWriter:
     """Writes Markdown page-by-page, rolling to a new part at a size budget.
 
@@ -284,12 +252,36 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
                             f"otherwise the text would extract as garbage.")
                 legacy_seen += len(forced)
 
+                # -- figures: analysed once per page, up front ----------------
+                # Reused below both to keep figure-region text out of the plain
+                # paragraph flow (page_markdown) and to describe the figure —
+                # analysing twice would cost the same geometry scan twice for
+                # nothing.
+                figs: dict[int, figures.Figure | None] = {}
+                if want_figs:
+                    for i in span:
+                        ctx.check_cancel()
+                        try:
+                            figs[i] = figures.analyse(doc.page(i), want_mermaid=want_mermaid)
+                        except Exception as exc:
+                            figs[i] = None
+                            ctx.log(f"Figure scan failed on page {i + 1} "
+                                    f"({type(exc).__name__}) — continuing.")
+
                 # -- layout extraction, digital pages only --------------------
                 rich: dict[int, str] = {}
                 for i in digital:
                     ctx.check_cancel()
                     try:
-                        rich[i] = page_markdown(doc.page(i), want_tables=want_tables)
+                        fig = figs.get(i)
+                        # Regression: a caption or in-drawing label used to appear
+                        # twice — garbled in the ordinary paragraph flow (short,
+                        # out-of-reading-order text) and again, properly, under
+                        # the figure's own description block. Exclude the
+                        # figure's own footprint from the flowing text.
+                        exclude = [fig.bbox] if fig else []
+                        rich[i] = page_markdown(doc.page(i), want_tables=want_tables,
+                                                exclude_boxes=exclude)
                     except Exception as exc:
                         ctx.log(f"Layout extraction failed on page {i + 1} "
                                 f"({type(exc).__name__}) — using raw text.")
@@ -345,12 +337,7 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
                         note.append(f"table (~{rows - 2} rows)")
 
                     if want_figs:
-                        try:
-                            fig = figures.analyse(page, want_mermaid=want_mermaid)
-                        except Exception as exc:
-                            fig = None
-                            ctx.log(f"Figure scan failed on page {i + 1} "
-                                    f"({type(exc).__name__}) — continuing.")
+                        fig = figs.get(i)
                         if fig:
                             fig_count += 1
                             if want_export:
@@ -369,7 +356,7 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
                     writer.note(i + 1, "; ".join(note))
                     writer.write_page(i + 1, text or "*[no extractable content]*")
 
-                raw.clear(); rich.clear(); ocr_map.clear(); forced.clear()
+                raw.clear(); rich.clear(); ocr_map.clear(); forced.clear(); figs.clear()
                 doc.release_layout()      # pdfplumber caches parsed page objects
                 gc.collect()
     finally:

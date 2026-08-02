@@ -18,9 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import batch, ocr                                        # noqa: E402
+from app import batch, ocr, registry                               # noqa: E402
 from app.ops.convert_markdown import _RollingWriter, _legacy_match  # noqa: E402
-from app.ops.figures import build_mermaid, pick_caption            # noqa: E402
+from app.ops.figures import build_mermaid, pick_caption, cluster_ids  # noqa: E402
 from app.workspace import Cancelled, OpContext, purge_temp_root, session_temp  # noqa: E402
 from app import config                                             # noqa: E402
 
@@ -252,6 +252,86 @@ def test_mermaid_refuses_ambiguity() -> None:
     check("caption matched to artwork",
           pick_caption([((100, 450, 300, 462), "Fig 4.2 - Cross Section")],
                        (100, 100, 300, 440)) != "")
+
+
+def test_figure_clusters_stay_separate() -> None:
+    """Regression: analyse() used to feed build_mermaid the WHOLE page's
+    geometry at once, so an unrelated shape elsewhere on the page (a
+    signature block, a second unrelated drawing) could get treated as part
+    of the same diagram — inventing a connection the page never drew."""
+    touching = [(0, 0, 10, 10), (8, 8, 20, 20)]
+    far_away = (500, 500, 520, 520)
+    ids = cluster_ids(touching + [far_away], tol=2.0)
+    check("touching boxes share a cluster", ids[0] == ids[1])
+    check("a far-away box is its own cluster", ids[0] != ids[2])
+    bridged = cluster_ids([(0, 0, 10, 10), (30, 0, 40, 10), (10, 4, 30, 6)], tol=1.0)
+    check("a connecting line bridges two boxes into one cluster",
+          bridged[0] == bridged[1] == bridged[2])
+
+
+def test_mixed_image_types_allowed_for_images_to_pdf() -> None:
+    """Regression: every extension was its own bucket, so selecting a .jpg
+    and a .png together (the normal way to use 'Images -> PDF') silently
+    dropped every action — operations_for() returned an empty list."""
+    mixed_images = [Path("photo.jpg"), Path("scan.png"), Path("cover.tiff")]
+    ops = registry.operations_for(mixed_images)
+    check("mixed image extensions still offer Images -> PDF",
+          any(o.id == "img_to_pdf" for o in ops))
+    mixed_docs = [Path("claim.pdf"), Path("reply.docx")]
+    check("genuinely different document types are still rejected",
+          registry.operations_for(mixed_docs) == [])
+
+
+def test_transparent_pixels_flattened_to_white() -> None:
+    """Regression: a plain .convert("RGB") on RGBA/palette-with-transparency
+    does not composite against a background, so a transparent PNG's
+    background turned solid black in the assembled PDF instead of staying
+    white."""
+    from PIL import Image
+    from app.ops.convert_image import _flatten
+    im = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
+    flat = _flatten(im)
+    check("transparent RGBA pixel becomes white, not black",
+          flat is not None and flat.getpixel((5, 5)) == (255, 255, 255))
+    opaque = Image.new("RGB", (10, 10), (10, 20, 30))
+    check("already-opaque RGB is left alone", _flatten(opaque) is None)
+
+
+def test_bitonal_images_recompressed_as_grayscale() -> None:
+    """Regression: bitonal ("1") scans -- the common case for old exhibits --
+    were promoted straight to RGB, tripling the encoded size for content
+    that carries no colour at all."""
+    from app.ops.compress import _target_mode
+    check("bitonal source becomes single-channel grayscale", _target_mode("1") == "L")
+    check("already-gray source stays gray", _target_mode("L") == "L")
+    check("colour source stays RGB", _target_mode("RGB") == "RGB")
+    check("palette/CMYK/alpha sources normalise to RGB", _target_mode("P") == "RGB")
+
+
+def test_figure_text_not_duplicated_in_body() -> None:
+    """Regression: a caption or in-drawing label appeared twice — garbled in
+    the ordinary paragraph flow (short, out-of-reading-order text) and again,
+    properly, under the figure's own description block."""
+    from app.pdfengine import Span
+    from app.ops._markdown_build import page_markdown
+
+    class FakePage:
+        def tables(self):
+            return []
+
+        def spans(self):
+            return [
+                Span((10, 10, 200, 30), "Real paragraph text that stays.", 11.0, False, "Arial"),
+                Span((10, 100, 120, 112), "Inside The Figure", 8.0, False, "Arial"),
+            ]
+
+    excluded = page_markdown(FakePage(), exclude_boxes=[(0, 90, 300, 200)])
+    check("real paragraph text is kept", "Real paragraph text" in excluded)
+    check("figure-region text is excluded from the paragraph flow",
+          "Inside The Figure" not in excluded)
+    unexcluded = page_markdown(FakePage())
+    check("without an exclude box, behaviour is unchanged",
+          "Inside The Figure" in unexcluded)
 
 
 # ---------------------------------------------------------------- pool

@@ -186,9 +186,16 @@ class App:
         self.f_target = num("Compression target", "target_mb", 1, 20000, suffix="MB")
         self.f_split = num("Split Markdown every", "split_mb", 0, 100, suffix="MB")
         self.f_dpi = num("Image quality", "image_dpi", 50, 600, suffix="DPI")
+        # Regression: pre-filling this with the *resolved* auto count meant
+        # _collect() read that concrete number straight back as an explicit
+        # setting on the very first run, permanently overwriting the "auto"
+        # (0) sentinel. Leave it blank + hinted instead, so "auto" survives
+        # a save/load round trip and still adapts if the app moves to a
+        # machine with a different core count.
         self.f_workers = ft.TextField(
             label="Files at once", width=185, dense=True,
-            value=str(c["workers"] or batch.default_workers()),
+            value=str(c["workers"]) if c["workers"] else "",
+            hint_text=f"auto ({batch.default_workers()})",
             keyboard_type=ft.KeyboardType.NUMBER,
             helper_text="Lower for very large files")
 
@@ -317,12 +324,12 @@ class App:
     def _set_files(self, files: list[Path]) -> None:
         groups: dict[str, list[Path]] = {}
         for f in files:
-            groups.setdefault(f.suffix.lower(), []).append(f)
+            groups.setdefault(registry.group_key(f.suffix.lower()), []).append(f)
         skipped = 0
         if len(groups) > 1:
-            ext = max(groups, key=lambda k: len(groups[k]))
-            skipped = sum(len(v) for k, v in groups.items() if k != ext)
-            files = groups[ext]
+            key = max(groups, key=lambda k: len(groups[k]))
+            skipped = sum(len(v) for k, v in groups.items() if k != key)
+            files = groups[key]
 
         self.files = files
         self.rows.clear()
@@ -419,10 +426,24 @@ class App:
                                 failures.append(f"{f.name}: {exc}")
                                 self._file_done(f, "", f"{type(exc).__name__}: {exc}")
                     else:
-                        self._mark(files[0], "running")
-                        out = op.handler(files, ctx)
+                        # Also reached by multi=True ops (e.g. Images -> PDF) where
+                        # one handler call consumes every selected file at once.
+                        # Regression: only files[0] used to get a status update, so
+                        # every other row stayed stuck on "waiting" forever, even
+                        # after the combined output was produced successfully.
+                        for f in files:
+                            self._mark(f, "running")
+                        try:
+                            out = op.handler(files, ctx)
+                        except Cancelled:
+                            raise
+                        except Exception:
+                            for f in files:
+                                self._mark(f, "failed", "")
+                            raise
                         outputs.append(str(out))
-                        self._file_done(files[0], str(out), "")
+                        for f in files:
+                            self._file_done(f, str(out), "")
         except Cancelled:
             self._finish("Cancelled. Temporary files removed.", outputs, failures)
             return

@@ -48,17 +48,28 @@ def register(op: Operation) -> Operation:
     return op
 
 
+def group_key(ext: str) -> str:
+    """Canonical bucket a file extension belongs to for selection purposes.
+
+    All image extensions collapse to one bucket: "Images -> PDF" is meant to
+    combine a .jpg and a .png in one job, so a selection is only "mixed" (and
+    thus rejected) when it spans genuinely different operations, e.g. PDFs
+    mixed with DOCX. Previously every extension was its own bucket, so picking
+    two different image formats together silently lost the feature.
+    """
+    return "image" if ext in IMAGE_EXTS else ext
+
+
 def operations_for(paths: list[Path]) -> list[Operation]:
     """Actions valid for the current selection."""
     if not paths:
         return []
     exts = {p.suffix.lower() for p in paths}
-    if len(exts) != 1:
+    if len({group_key(e) for e in exts}) != 1:
         return []
-    ext = exts.pop()
     multi = len(paths) > 1
     ops = [op for op in OPERATIONS
-           if ext in op.extensions and (op.multi or op.batch or not multi)]
+           if (exts & set(op.extensions)) and (op.multi or op.batch or not multi)]
     return sorted(ops, key=lambda o: (not o.primary,))
 
 

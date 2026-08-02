@@ -88,6 +88,39 @@ def _near_bbox(pt: tuple[float, float], b: BBox, tol: float) -> bool:
     return (dx <= tol or dy <= tol) or not inside
 
 
+def cluster_ids(boxes: list[BBox], tol: float) -> list[int]:
+    """Union-find grouping of boxes that touch or sit within `tol` of each other.
+
+    Returns one cluster id per input box (same order). Used to check whether
+    everything build_mermaid is about to be fed forms one spatially-connected
+    diagram, or several unrelated ones that merely happen to share a page —
+    e.g. a signature block and an unrelated flowchart. Without this, geometry
+    from two unrelated drawings could get treated as one, and a line from
+    drawing A could "connect" a box in drawing B purely by coincidence of
+    position — inventing a relationship between them that the page never drew.
+    """
+    n = len(boxes)
+    parent = list(range(n))
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def close(b1: BBox, b2: BBox) -> bool:
+        return not (b1[2] + tol < b2[0] or b2[2] + tol < b1[0]
+                    or b1[3] + tol < b2[1] or b2[3] + tol < b1[1])
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if close(boxes[i], boxes[j]):
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+    return [find(i) for i in range(n)]
+
+
 def build_mermaid(nodes: list[tuple[BBox, str]],
                   segments: list[tuple[tuple[float, float], tuple[float, float]]],
                   tol: float = 14.0) -> str | None:
@@ -226,10 +259,20 @@ def analyse(page, min_coverage: float = 0.06,
                 nodes.append((rb, " ".join(inner)))
         segs = list(geo.lines)
         if nodes and segs:
-            try:
-                fig.mermaid = build_mermaid(nodes, segs) or ""
-            except Exception:
-                fig.mermaid = ""
+            node_boxes = [nb for nb, _ in nodes]
+            seg_boxes = [(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+                        for (x0, y0), (x1, y1) in segs]
+            combined = node_boxes + seg_boxes
+            # Bounded: this is O(n^2); real flowcharts are a handful of boxes,
+            # and MAX_PATHS_FOR_STRUCTURE already keeps geo.path_count sane, but
+            # guard the pathological case explicitly rather than trust that.
+            single_diagram = len(combined) > 600 or len(
+                {cid for cid in cluster_ids(combined, tol=14.0)[:len(node_boxes)]}) <= 1
+            if single_diagram:
+                try:
+                    fig.mermaid = build_mermaid(nodes, segs) or ""
+                except Exception:
+                    fig.mermaid = ""
     return fig
 
 

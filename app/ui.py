@@ -153,8 +153,8 @@ class App(tk.Frame):
         if not chosen:
             return
         self.files = [Path(c) for c in chosen]
-        exts = {p.suffix.lower() for p in self.files}
-        if len(exts) > 1:
+        groups = {registry.group_key(p.suffix.lower()) for p in self.files}
+        if len(groups) > 1:
             messagebox.showwarning(config.APP_NAME, "Please select files of one type only.")
             self.files = []
         self._refresh_actions()
@@ -222,13 +222,13 @@ class App(tk.Frame):
 
         groups: dict[str, list[Path]] = {}
         for f in found:
-            groups.setdefault(f.suffix.lower(), []).append(f)
+            groups.setdefault(registry.group_key(f.suffix.lower()), []).append(f)
         if len(groups) > 1:
-            ext = max(groups, key=lambda k: len(groups[k]))
-            skipped = sum(len(v) for k, v in groups.items() if k != ext)
-            self._write(f"Folder holds mixed types; taking {len(groups[ext])} "
-                        f"{ext} file(s), ignoring {skipped} other file(s).")
-            found = groups[ext]
+            key = max(groups, key=lambda k: len(groups[k]))
+            skipped = sum(len(v) for k, v in groups.items() if k != key)
+            self._write(f"Folder holds mixed types; taking {len(groups[key])} "
+                        f"{key} file(s), ignoring {skipped} other file(s).")
+            found = groups[key]
 
         self.files = found
         self._write(f"Added {len(found)} file(s) from {folder}")

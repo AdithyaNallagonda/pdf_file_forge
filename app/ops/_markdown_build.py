@@ -31,7 +31,13 @@ def _table_md(rows: list[list[str]]) -> str:
     return "\n".join(out)
 
 
-def page_markdown(page: Page, want_tables: bool = True) -> str:
+def page_markdown(page: Page, want_tables: bool = True,
+                  exclude_boxes: list[BBox] | None = None) -> str:
+    """`exclude_boxes` lets the caller keep figure-region text out of the flowing
+    paragraph text (same idea as table suppression below) -- otherwise a
+    caption or in-drawing label appears twice: once garbled here (it is short,
+    out-of-reading-order text, so it reads as nonsense) and once properly under
+    the figure's own description block."""
     tables = page.tables() if want_tables else []
     spans = page.spans()
     if not spans and not tables:
@@ -44,10 +50,13 @@ def page_markdown(page: Page, want_tables: bool = True) -> str:
     for box, rows in tables:
         blocks.append((box[1], _table_md(rows)))
 
+    exclude = exclude_boxes or []
     para: list[str] = []
     para_top = 0.0
     for span in spans:
         if any(_inside(span, box) for box, _ in tables):
+            continue
+        if any(_inside(span, box) for box in exclude):
             continue
         text = " ".join(span.text.split())
         if not text:

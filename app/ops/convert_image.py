@@ -7,6 +7,28 @@ from .. import pdfengine
 from ..workspace import OpContext
 
 
+def _flatten(im) -> "Image.Image | None":
+    """Normalise a source image to a mode the PDF assembler can embed directly.
+
+    Regression: a plain `.convert("RGB")` on RGBA/LA/palette-with-transparency
+    does NOT composite against a background -- it keeps the raw channel values
+    of "transparent" pixels, which are frequently (0, 0, 0). Every transparent
+    region in the source PNG was turning solid black in the assembled PDF.
+    Composite onto white first, matching how the page will actually be seen.
+    """
+    from PIL import Image
+    if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+        rgba = im.convert("RGBA")
+        bg = Image.new("RGB", rgba.size, (255, 255, 255))
+        bg.paste(rgba, mask=rgba.split()[-1])
+        return bg
+    if im.mode == "1":
+        return im.convert("L")
+    if im.mode not in ("RGB", "L"):
+        return im.convert("RGB")
+    return None
+
+
 def images_to_pdf(sources: list[Path], ctx: OpContext) -> Path:
     try:
         from PIL import Image
@@ -23,10 +45,10 @@ def images_to_pdf(sources: list[Path], ctx: OpContext) -> Path:
         ctx.progress(5 + 70 * i / len(ordered), f"Preparing {p.name}")
         try:
             with Image.open(p) as im:
-                # img2pdf rejects alpha and non-RGB modes; normalise those only.
-                if im.mode in ("RGBA", "LA", "P", "CMYK", "1"):
+                flattened = _flatten(im)
+                if flattened is not None:
                     conv = stage / f"{i:05d}.jpg"
-                    im.convert("RGB").save(conv, "JPEG", quality=92, optimize=True)
+                    flattened.save(conv, "JPEG", quality=92, optimize=True)
                     prepared.append(conv)
                     continue
         except Exception as e:

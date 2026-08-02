@@ -36,6 +36,20 @@ def _predict_step(ratio: float) -> int:
     return len(IMAGE_STEPS) - 1
 
 
+def _target_mode(mode: str) -> str:
+    """Which PIL mode to re-encode an embedded image as before JPEG output.
+
+    Regression: bitonal ("1") scans -- the common case for old exhibits --
+    were being promoted straight to RGB, tripling the encoded size for content
+    that carries no colour at all.
+    """
+    if mode in ("RGB", "L"):
+        return mode
+    if mode == "1":
+        return "L"
+    return "RGB"
+
+
 def _lossless(src: Path, dst: Path) -> bool:
     try:
         import pikepdf
@@ -77,6 +91,12 @@ def _recompress_images(src: Path, dst: Path, dpi: int, quality: int,
                     try:
                         if obj.get("/Subtype") != "/Image":
                             continue
+                        if obj.get("/SMask") is not None:
+                            # Has a soft mask (alpha/transparency). Re-encoding as
+                            # opaque JPEG and dropping the mask reference would
+                            # silently change how the page looks (e.g. a
+                            # translucent overlay turning solid) -- leave it.
+                            continue
                         pim = pikepdf.PdfImage(obj)
                         img = pim.as_pil_image()
                         w, h = img.size
@@ -88,8 +108,9 @@ def _recompress_images(src: Path, dst: Path, dpi: int, quality: int,
                             img = img.resize((max(1, int(w * scale)),
                                               max(1, int(h * scale))),
                                              Image.LANCZOS)
-                        if img.mode not in ("RGB", "L"):
-                            img = img.convert("RGB")
+                        target_mode = _target_mode(img.mode)
+                        if img.mode != target_mode:
+                            img = img.convert(target_mode)
                         buf = io.BytesIO()
                         img.save(buf, "JPEG", quality=quality, optimize=True)
                         data = buf.getvalue()
