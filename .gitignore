@@ -15,3 +15,6 @@ temp/
 result_files/
 logs/
 settings.json
+
+# Local working notes, not part of the shipped product
+WORKFLOW.md
