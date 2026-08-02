@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import math
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -146,15 +147,22 @@ SCRIPT_LANGS: dict[str, list[str]] = {
 }
 
 
+def osd_sample_is_adequate(page_count: int, sampled_count: int) -> bool:
+    """OSD is statistical evidence, so do not let a thin sample drop a pack."""
+    return sampled_count >= min(page_count, max(12, math.ceil(page_count * 0.02)))
+
+
 def detect_scripts(pdf: Path, pages: list[int], workroot: Path, tess: str,
-                   samples: int = 6, dpi: int = 150) -> set[str]:
+                   samples: int = 12, dpi: int = 150, selected: str = "",
+                   is_cancelled=None) -> set[str]:
     """Which scripts actually appear, from a sample of pages.
 
     Sampling rather than per-page detection is deliberate: an OSD pass costs a
     process spawn, and running one per page would give back the very overhead
     the batching removed. Six evenly spaced pages is enough to tell a Telugu
     volume from an English one; a document that genuinely mixes scripts will
-    show both in the sample and keep the full language set.
+    show both in the sample and keep the full language set.  A small sample is
+    useful diagnostic information, but is deliberately not allowed to narrow.
     """
     if not pages:
         return set()
@@ -162,12 +170,16 @@ def detect_scripts(pdf: Path, pages: list[int], workroot: Path, tess: str,
 
     step = max(1, len(pages) // samples)
     picks = pages[::step][:samples]
+    if not osd_sample_is_adequate(len(pages), len(picks)):
+        return set()
     work = workroot / "osd"
     work.mkdir(parents=True, exist_ok=True)
-    found: set[str] = set()
+    found: dict[str, int] = {}
     try:
         with pdfengine.open_pdf(Path(pdf)) as doc:
             for i in picks:
+                if is_cancelled and is_cancelled():
+                    return set()
                 img = work / f"osd_{i:06d}.png"
                 try:
                     doc.page(i).save_png(img, dpi=dpi, gray=True)
@@ -177,14 +189,20 @@ def detect_scripts(pdf: Path, pages: list[int], workroot: Path, tess: str,
                                          timeout=120, errors="replace")
                     for line in (res.stdout or "").splitlines():
                         if line.lower().startswith("script:"):
-                            found.add(line.split(":", 1)[1].strip())
+                            script = line.split(":", 1)[1].strip()
+                            found[script] = found.get(script, 0) + 1
                 except Exception:
                     continue
     except Exception:
         return set()
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    return found
+    selected_codes = {code for code in selected.split("+") if code}
+    # OSD regularly emits a one-page phantom script.  An unknown script cannot
+    # help select a chosen pack, so omit that noise from the evidence log too.
+    return {script for script, count in found.items()
+            if not selected_codes or (set(SCRIPT_LANGS.get(script, [])) & selected_codes)
+            or count > 1}
 
 
 def narrow_langs(selected: str, scripts: set[str]) -> str:

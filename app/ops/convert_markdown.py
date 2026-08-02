@@ -25,18 +25,27 @@ from ._markdown_build import page_markdown
 # bytes are Latin codepoints mapped onto Devanagari/Telugu glyphs by the font —
 # extraction yields convincing-looking mojibake. These pages must be OCR'd even
 # though the triage says they carry text.
-LEGACY_FONT_HINTS = (
+LEGACY_FONT_HINTS: dict[str, str] = {
     # Devanagari (Hindi/Marathi)
-    "kruti", "krutidev", "devlys", "shree", "shreelipi", "chanakya", "agra",
-    "dvb-", "dv-", "aps", "akruti", "walkman", "amarujala", "jagran", "bhaskar",
-    "shivaji", "yogeshweb", "kundli", "millennium", "richa", "sanskrit99",
+    "kruti": "Devanagari", "krutidev": "Devanagari", "devlys": "Devanagari",
+    "shree": "Devanagari", "shreelipi": "Devanagari", "chanakya": "Devanagari",
+    "agra": "Devanagari", "dvb-": "Devanagari", "dv-": "Devanagari",
+    "aps": "Devanagari", "akruti": "Devanagari", "walkman": "Devanagari",
+    "amarujala": "Devanagari", "jagran": "Devanagari", "bhaskar": "Devanagari",
+    "shivaji": "Devanagari", "yogeshweb": "Devanagari", "kundli": "Devanagari",
+    "millennium": "Devanagari", "richa": "Devanagari", "sanskrit99": "Devanagari",
     # Telugu / Kannada / Tamil
-    "anu", "godavari", "priyanka", "hemalatha", "vijaya", "eenadu", "shree-tel",
-    "tlot", "tlwg", "bharat", "elango", "amudham", "tab-", "tam-", "tscii",
-    "nudi", "baraha", "shree-kan", "shree-tam",
+    "anu": "Telugu", "godavari": "Telugu", "priyanka": "Telugu",
+    "hemalatha": "Telugu", "vijaya": "Telugu", "eenadu": "Telugu",
+    "shree-tel": "Telugu", "tlot": "Telugu", "tlwg": "Telugu",
+    "bharat": "Telugu", "elango": "Tamil", "amudham": "Tamil",
+    "tab-": "Tamil", "tam-": "Tamil", "tscii": "Tamil", "nudi": "Kannada",
+    "baraha": "Kannada", "shree-kan": "Kannada", "shree-tam": "Tamil",
     # generic legacy encodings
-    "isfoc", "gist", "susha", "ml-", "mlw", "subak", "sakal",
-)
+    "isfoc": "Devanagari", "gist": "Devanagari", "susha": "Devanagari",
+    "ml-": "Malayalam", "mlw": "Malayalam", "subak": "Malayalam",
+    "sakal": "Devanagari",
+}
 
 
 def _legacy_match(font_name: str) -> bool:
@@ -55,6 +64,23 @@ def _legacy_match(font_name: str) -> bool:
     return False
 
 
+def legacy_font_script(font_name: str) -> str:
+    """Return the script structurally implied by a legacy PDF font name."""
+    base = font_name.lower().split("+")[-1]
+    for hint, script in sorted(LEGACY_FONT_HINTS.items(), key=lambda item: -len(item[0])):
+        if "-" in hint and (base == hint or base.startswith(hint)):
+            return script
+    tokens = [t for t in re.split(r"[^a-z0-9]+", base) if t]
+    for tok in tokens:
+        # Prefer the most specific token prefix: Shree-Tel is Telugu, while
+        # plain Shree is the older Devanagari family.
+        for hint, script in sorted(LEGACY_FONT_HINTS.items(), key=lambda item: -len(item[0])):
+            h = hint.strip("-")
+            if h and ((tok == h) or (len(h) > 3 and tok.startswith(h))):
+                return script
+    return ""
+
+
 def uses_legacy_font(page) -> str:
     """Return the offending font name if this page relies on a legacy Indic font."""
     try:
@@ -64,6 +90,49 @@ def uses_legacy_font(page) -> str:
     except Exception:
         pass
     return ""
+
+
+SCRIPT_RANGES = {
+    "Devanagari": (0x0900, 0x097F), "Telugu": (0x0C00, 0x0C7F),
+    "Tamil": (0x0B80, 0x0BFF), "Kannada": (0x0C80, 0x0CFF),
+    "Malayalam": (0x0D00, 0x0D7F),
+}
+
+
+def has_script(text: str, script: str) -> bool:
+    """Whether OCR produced at least one Unicode character in the expected script."""
+    bounds = SCRIPT_RANGES.get(script)
+    return bool(bounds and any(bounds[0] <= ord(char) <= bounds[1] for char in text))
+
+
+def script_mismatch_warning(script: str) -> str:
+    return ("> [!WARNING]\n"
+            f"> This page uses a legacy {script} font but no {script} text was\n"
+            "> recovered. Verify against the original before relying on this page.")
+
+
+def scan_font_scripts(doc, total: int, ctx: OpContext) -> set[str]:
+    """Read font dictionaries only; damaged pages are evidence gaps, not failures."""
+    if total <= 3000:
+        pages = range(total)
+    else:
+        # Bound pathological files while retaining evidence across the document.
+        pages = sorted({round(i * (total - 1) / 2999) for i in range(3000)})
+    scripts: set[str] = set()
+    count = len(pages)
+    for pos, index in enumerate(pages, 1):
+        ctx.check_cancel()
+        try:
+            for font in doc.page(index).fonts():
+                script = legacy_font_script(font or "")
+                if script:
+                    scripts.add(script)
+        except Exception:
+            pass
+        if pos == count or pos % 25 == 0:
+            ctx.progress(3 * pos / max(1, count),
+                         f"Scanning font resources {pos}/{count}")
+    return scripts
 
 
 class _RollingWriter:
@@ -185,7 +254,8 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
     want_mermaid = bool(opts.get("mermaid", True))
     want_export = bool(opts.get("export_figures", False))
     ocr_dpi = int(opts.get("ocr_dpi", 300))
-    ocr_lang = str(opts.get("ocr_lang", ocr.DEFAULT_LANGS))
+    requested_langs = str(opts.get("ocr_lang", ocr.DEFAULT_LANGS))
+    ocr_lang = requested_langs
     force_ocr = bool(opts.get("force_ocr", False))
     auto_langs = bool(opts.get("auto_langs", True))
     langs_resolved = False
@@ -218,6 +288,17 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
         with pdfengine.open_pdf(src) as doc:
             total = doc.page_count
             window = max(8, int(config.P4LLM_WINDOW))
+            font_scripts = scan_font_scripts(doc, total, ctx)
+            if font_scripts:
+                ctx.log("Legacy font scripts scanned across "
+                        f"{min(total, 3000)} page(s): {', '.join(sorted(font_scripts))}.")
+                requested = set(requested_langs.split("+"))
+                unavailable = [code for script in font_scripts
+                               for code in ocr.SCRIPT_LANGS.get(script, [])
+                               if code in requested and code not in ocr_lang.split("+")]
+                if unavailable:
+                    ctx.log("Cannot read legacy-script language pack(s) not installed: "
+                            + ", ".join(sorted(set(unavailable))) + ".")
 
             for start in range(0, total, window):
                 ctx.check_cancel()
@@ -230,6 +311,7 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
                 # scanned pages that hold no text at all is not.
                 raw: dict[int, str] = {}
                 forced: dict[int, str] = {}
+                forced_scripts: dict[int, str] = {}
                 for i in span:
                     try:
                         pg = doc.page(i)
@@ -240,6 +322,10 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
                             bad = uses_legacy_font(pg)
                             if bad:
                                 forced[i] = bad
+                                script = legacy_font_script(bad)
+                                if script:
+                                    forced_scripts[i] = script
+                                    font_scripts.add(script)
                     except Exception:
                         raw[i] = ""
                 digital = [i for i in span
@@ -291,13 +377,24 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
                 # Narrow the language set once, from a sample spread across the
                 # whole document — running every selected model on every page is
                 # both slower and less accurate than running only what is there.
-                if scanned and tess and auto_langs and not langs_resolved:
+                if scanned and tess and auto_langs and (not langs_resolved or forced_scripts):
                     langs_resolved = True
+                    ctx.log("OCR narrowing evidence: font scan across "
+                            f"{min(total, 3000)} page(s) found "
+                            f"{', '.join(sorted(font_scripts)) or 'no legacy scripts'}; "
+                            "OSD is used only when its sample is adequate.")
                     try:
-                        scripts = ocr.detect_scripts(src, list(range(total)),
-                                                     ocr_root, tess)
+                        osd_scripts = ocr.detect_scripts(
+                            src, list(range(total)), ocr_root, tess,
+                            selected=ocr_lang, is_cancelled=ctx.check_cancel_flag)
+                        # English native layers are common alongside legacy fonts;
+                        # do not erase the user's English model merely because a
+                        # legacy-font scan has no modern-font script metadata.
+                        baseline = {"Latin"} if "eng" in requested_langs.split("+") else set()
+                        scripts = font_scripts | osd_scripts | baseline
                         if scripts:
-                            narrowed = ocr.narrow_langs(ocr_lang, scripts)
+                            narrowed = ocr.narrow_langs(requested_langs, scripts)
+                            narrowed = ocr.normalise_langs(narrowed, available)
                             ctx.log(f"Scripts found: {', '.join(sorted(scripts))} — "
                                     f"reading with '{narrowed}'"
                                     + (f" (was '{ocr_lang}')" if narrowed != ocr_lang else ""))
@@ -328,6 +425,11 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
                             text = got
                             ocr_used += 1
                     text = text.strip()
+                    expected_script = forced_scripts.get(i, "")
+                    if expected_script and not has_script(text, expected_script):
+                        ctx.log(f"WARNING page {i + 1}: legacy {expected_script} font "
+                                "was forced to OCR but no matching-script text was recovered.")
+                        text = (text + "\n\n" if text else "") + script_mismatch_warning(expected_script)
                     if not text:
                         empty += 1
 
@@ -356,7 +458,7 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
                     writer.note(i + 1, "; ".join(note))
                     writer.write_page(i + 1, text or "*[no extractable content]*")
 
-                raw.clear(); rich.clear(); ocr_map.clear(); forced.clear(); figs.clear()
+                raw.clear(); rich.clear(); ocr_map.clear(); forced.clear(); forced_scripts.clear(); figs.clear()
                 doc.release_layout()      # pdfplumber caches parsed page objects
                 gc.collect()
     finally:
@@ -373,6 +475,7 @@ def pdf_to_markdown(sources: list[Path], ctx: OpContext) -> Path:
         notes.append(f"{mermaid_count} diagrams reconstructed")
     if ocr_used:
         notes.append(f"{ocr_used} OCR'd ({ocr_lang})")
+    notes.append(f"languages used: {ocr_lang}")
     if legacy_seen:
         notes.append(f"{legacy_seen} legacy-font pages re-read")
     if empty:

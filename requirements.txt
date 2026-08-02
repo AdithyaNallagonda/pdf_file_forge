@@ -8,4 +8,5 @@ pillow>=10.2           # MIT-CMU             — image encode/decode, PDF assemb
 python-docx>=1.1       # MIT                 — DOCX writing
 pytesseract>=0.3.10    # Apache-2.0          — Tesseract wrapper (engine Apache-2.0)
 docx2pdf>=0.1.8        # MIT (optional, Windows/macOS + Microsoft Word only)
+flet-desktop>=0.86,<0.87  # Apache-2.0 — required local desktop runtime
 flet>=0.24             # Apache-2.0          — desktop UI (falls back to Tkinter)

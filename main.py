@@ -25,6 +25,7 @@ log = logging.getLogger(config.APP_NAME)
 
 def run() -> None:
     force_tk = "--classic-ui" in sys.argv
+    fallback_reason = "Classic interface selected on the command line." if force_tk else ""
     if not force_tk:
         try:
             from app.flet_ui import main as flet_main
@@ -32,10 +33,14 @@ def run() -> None:
             return
         except ImportError as exc:
             log.warning("Flet unavailable (%s); using the classic UI.", exc)
-        except Exception:
+            fallback_reason = f"Flet is unavailable: {exc}"
+            print(f"FileForge: {fallback_reason} Falling back to the classic Tkinter interface.", file=sys.stderr)
+        except Exception as exc:
             log.exception("Flet UI failed to start; falling back to the classic UI.")
+            fallback_reason = f"Flet failed to start: {type(exc).__name__}: {exc}"
+            print(f"FileForge: {fallback_reason} Falling back to the classic Tkinter interface.", file=sys.stderr)
     from app.ui import main as tk_main
-    tk_main([a for a in sys.argv[1:] if a != "--classic-ui"])
+    tk_main([a for a in sys.argv[1:] if a != "--classic-ui"], fallback_reason=fallback_reason)
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ hiddenimports = []
 # required. Keep this list in sync with requirements.txt / THIRD_PARTY_LICENSES.md
 # -- every entry here must be permissively licensed (see CLAUDE.md 2.1).
 for pkg in ("pypdfium2", "pypdfium2_raw", "pdfplumber", "pdfminer", "pypdf",
-            "pikepdf", "PIL", "flet"):
+            "pikepdf", "PIL", "flet", "flet_desktop"):
     try:
         d, b, h = collect_all(pkg)
         datas += d; binaries += b; hiddenimports += h
@@ -38,7 +38,7 @@ if (ROOT / "tools").is_dir():
 # (CLAUDE.md 2.1). This project already paid for one AGPL removal refactor.
 hiddenimports += [
     "pypdfium2", "pdfplumber", "pdfminer", "pdfminer.high_level", "pypdf", "pikepdf",
-    "PIL.Image", "PIL.ImageFile", "pytesseract",
+    "PIL.Image", "PIL.ImageFile", "pytesseract", "flet_desktop",
     "docx",
     # docx2pdf drives Word over COM
     "win32com", "win32com.client", "pythoncom", "pywintypes",

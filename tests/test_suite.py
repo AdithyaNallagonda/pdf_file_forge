@@ -19,7 +19,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import batch, ocr, registry                               # noqa: E402
-from app.ops.convert_markdown import _RollingWriter, _legacy_match  # noqa: E402
+from app.ops.convert_markdown import (  # noqa: E402
+    _RollingWriter, _legacy_match, legacy_font_script, script_mismatch_warning,
+)
 from app.ops.figures import build_mermaid, pick_caption, cluster_ids  # noqa: E402
 from app.workspace import Cancelled, OpContext, purge_temp_root, session_temp  # noqa: E402
 from app import config                                             # noqa: E402
@@ -219,6 +221,78 @@ def test_legacy_fonts() -> None:
     check("legacy Indic fonts detected", all(_legacy_match(f) for f in legacy))
     check("modern fonts not misflagged (no false OCR)",
           not any(_legacy_match(f) for f in modern))
+
+
+def test_legacy_font_script_mapping() -> None:
+    cases = {"KrutiDev010": "Devanagari", "Godavari": "Telugu",
+             "Shree-Tel-0800": "Telugu", "TSCII": "Tamil",
+             "NotoSansDevanagari": "", "ArialMT-Caps": ""}
+    check("legacy font names carry their correct script",
+          all(legacy_font_script(font) == script for font, script in cases.items()))
+
+
+def test_legacy_match_unchanged() -> None:
+    legacy = ["Kruti Dev 010", "KrutiDev010", "Shree-Tel-0800", "Godavari",
+              "DVB-TTYogeshEN", "APS-DV-Priyanka", "ML-TTKarthika"]
+    modern = ["ArialMT-Caps", "Manuscript", "Mangal", "NotoSansDevanagari",
+              "Nirmala UI", "TimesNewRomanPSMT", "SmallCaps-Regular", "Gautami"]
+    check("legacy matcher remains token-prefix based",
+          all(_legacy_match(font) for font in legacy)
+          and not any(_legacy_match(font) for font in modern))
+
+
+def test_strong_evidence_survives_narrowing() -> None:
+    check("Devanagari font evidence keeps Hindi",
+          ocr.narrow_langs("eng+hin+tel", {"Latin", "Devanagari"}) == "eng+hin")
+
+
+def test_font_scan_absence_allows_narrowing() -> None:
+    check("absence of Telugu font permits Telugu narrowing",
+          ocr.narrow_langs("eng+hin+tel", {"Latin", "Devanagari"}) == "eng+hin")
+
+
+def test_narrowing_refuses_thin_sample() -> None:
+    check("six of 734 pages is too thin for OSD narrowing",
+          not ocr.osd_sample_is_adequate(734, 6))
+
+
+def test_narrowing_still_works_on_dense_sample() -> None:
+    check("adequate all-Latin sample still narrows to English",
+          ocr.osd_sample_is_adequate(100, 12)
+          and ocr.narrow_langs("eng+hin+tel", {"Latin"}) == "eng")
+
+
+def test_single_page_spurious_script_ignored() -> None:
+    # A one-off OSD-only script which maps to no selected pack cannot alter it.
+    check("single-page phantom Cyrillic cannot affect selected languages",
+          ocr.narrow_langs("eng+hin", {"Latin", "Cyrillic"}) == "eng")
+
+
+def test_narrow_langs_never_adds() -> None:
+    selected = "eng+tel"
+    result = ocr.narrow_langs(selected, {"Latin", "Devanagari", "Tamil"})
+    check("narrow_langs never adds an unselected language",
+          set(result.split("+")).issubset(set(selected.split("+"))))
+
+
+def test_script_mismatch_warns() -> None:
+    warning = script_mismatch_warning("Devanagari")
+    check("missing expected OCR script emits a visible warning",
+          warning.startswith("> [!WARNING]") and "Devanagari" in warning)
+
+
+def test_warning_block_wellformed() -> None:
+    with session_temp() as t:
+        ctx = ctx_in(t)
+        stage = t / "warning"; stage.mkdir()
+        writer = _RollingWriter(stage, 1024)
+        writer.write_page(1, script_mismatch_warning("Telugu"))
+        writer.write_page(2, "ordinary text")
+        out = writer.finalize(ctx, Path("warning.pdf"), 2)
+        text = out.read_text(encoding="utf-8")
+        check("warning Markdown block survives page assembly",
+              "> [!WARNING]\n> This page uses" in text and "<!-- page 2 -->" in text)
+        out.unlink()
 
 
 def test_languages() -> None:

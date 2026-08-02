@@ -18,7 +18,7 @@ from .workspace import Cancelled, OpContext, human, purge_temp_root, session_tem
 
 class App(tk.Frame):
     def __init__(self, master: Tk, initial: list[Path] | None = None,
-                 auto_op: str | None = None):
+                 auto_op: str | None = None, fallback_reason: str = ""):
         super().__init__(master, padx=12, pady=10)
         self.pack(fill=BOTH, expand=True)
         self.files: list[Path] = []
@@ -28,6 +28,9 @@ class App(tk.Frame):
         self.cancel_flag = threading.Event()
         self.worker: threading.Thread | None = None
         self._build()
+        if fallback_reason:
+            self.status.config(text="Classic fallback interface active.", foreground="#a33")
+            self._write("NOTICE: " + fallback_reason)
         self.after(100, self._drain)
         if initial:
             self.files = [p for p in initial if p.exists()]
@@ -428,7 +431,7 @@ class App(tk.Frame):
             pass
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None, fallback_reason: str = "") -> None:
     """argv: file paths (drag-and-drop onto the icon) plus optional --op <id>."""
     purge_temp_root()          # clear anything a previous crash left behind
     args = list(argv if argv is not None else sys.argv[1:])
@@ -449,7 +452,7 @@ def main(argv: list[str] | None = None) -> None:
         ttk.Style().theme_use("vista")
     except tk.TclError:
         pass
-    app = App(root, initial=initial, auto_op=auto_op)
+    app = App(root, initial=initial, auto_op=auto_op, fallback_reason=fallback_reason)
 
     def on_close() -> None:
         app.cancel_flag.set()
