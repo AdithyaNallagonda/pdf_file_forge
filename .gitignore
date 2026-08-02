@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.buildenv/
+
+# Build output
+build/
+dist/
+tools/
+*.spec.bak
+
+# App runtime workspace — appears here when the source tree sits at D:\FileForge
+temp/
+result_files/
+logs/
+settings.json

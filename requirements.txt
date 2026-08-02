@@ -1,0 +1,11 @@
+# All permissively licensed — safe to ship in a proprietary product.
+pypdfium2>=4.30        # Apache-2.0 / BSD-3  (Google PDFium) — render + raw text
+pdfplumber>=0.11       # MIT                 — layout, tables, vector geometry
+pdfminer.six>=20240706 # MIT                 — pdfplumber's parser
+pypdf>=5.1             # BSD-3               — structure, fonts, page ops
+pikepdf>=9.0           # MPL-2.0 (QPDF Apache-2.0) — lossless optimise, image swap
+pillow>=10.2           # MIT-CMU             — image encode/decode, PDF assembly
+python-docx>=1.1       # MIT                 — DOCX writing
+pytesseract>=0.3.10    # Apache-2.0          — Tesseract wrapper (engine Apache-2.0)
+docx2pdf>=0.1.8        # MIT (optional, Windows/macOS + Microsoft Word only)
+flet>=0.24             # Apache-2.0          — desktop UI (falls back to Tkinter)
