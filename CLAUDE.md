@@ -38,7 +38,7 @@ Consequences that shape the whole design:
 ### 2.1 Licensing (commercial publication is planned)
 
 The app is intended to be **sold as closed source**. Every dependency must be
-permissively licensed. See `THIRD_PARTY_LICENSES.md`.
+permissively licensed. Licences are noted per dependency in `requirements.txt`.
 
 **Never reintroduce these**, however convenient:
 

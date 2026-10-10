@@ -12,7 +12,7 @@ hiddenimports = []
 
 # Some of these packages carry data files (tessdata-adjacent resources, CJK
 # encoding tables, etc.) that static analysis cannot see, so collect_all() is
-# required. Keep this list in sync with requirements.txt / THIRD_PARTY_LICENSES.md
+# required. Keep this list in sync with requirements.txt
 # -- every entry here must be permissively licensed (see CLAUDE.md 2.1).
 for pkg in ("pypdfium2", "pypdfium2_raw", "pdfplumber", "pdfminer", "pypdf",
             "pikepdf", "PIL", "flet", "flet_desktop"):
